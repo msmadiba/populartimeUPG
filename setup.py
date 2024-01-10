@@ -19,7 +19,7 @@ setup(
     version='3.0',
     description='Populartimes Google Maps UPG',
     long_description=long_description,
-    url='https://github.com/msmadiba/populartimeUPG',
+    url='https://github.com/msmadiba/populartimesUPG',
     author='msmadiba;riedmaph;m-wrzr;SweetyGott',
     license='MIT',
     classifiers=[
