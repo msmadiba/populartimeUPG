@@ -17,7 +17,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 setup(
     name='populartimesUPG',
     version='3.0',
-    description='Populartimes Google Maps UPG',
+    description='PopulartimesUPG Google Maps',
     long_description=long_description,
     url='https://github.com/msmadiba/populartimesUPG',
     author='msmadiba;riedmaph;m-wrzr;SweetyGott',
@@ -57,7 +57,7 @@ setup(
     # pip to create the appropriate form of executable for the target platform.
     entry_points={
         'console_scripts': [
-            'populartimes=populartimes:execute',
+            'populartimesUPG=populartimesUPG:execute',
         ],
     },
 )
