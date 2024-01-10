@@ -1,5 +1,5 @@
 """
-https://github.com/msmadiba/populartimeUPG
+https://github.com/msmadiba/populartimesUPG
 """
 
 # Always prefer setuptools over distutils
