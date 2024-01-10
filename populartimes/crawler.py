@@ -20,7 +20,7 @@ from geopy.distance import geodesic, GeodesicDistance
 
 # urls for google api web service
 BASE_URL = "https://places.googleapis.com/v1/places"
-# RADAR_URL = BASE_URL + "radarsearch/json?location={},{}&radius={}&types={}&key={}"
+RADAR_URL = BASE_URL + "radarsearch/json?location={},{}&radius={}&types={}&key={}"
 NEARBY_URL = BASE_URL + ":searchnearby"
 DETAIL_URL = BASE_URL + "/json?placeid={}"
 
