@@ -19,16 +19,16 @@ from geopy import Point
 from geopy.distance import geodesic, GeodesicDistance
 
 # urls for google api web service
-BASE_URL = "https://maps.googleapis.com/maps/api/place/"
-RADAR_URL = BASE_URL + "radarsearch/json?location={},{}&radius={}&types={}&key={}"
-NEARBY_URL = BASE_URL + "nearbysearch/json?location={},{}&radius={}&types={}&key={}"
-DETAIL_URL = BASE_URL + "details/json?placeid={}&key={}"
+BASE_URL = "https://places.googleapis.com/v1/places"
+# RADAR_URL = BASE_URL + "radarsearch/json?location={},{}&radius={}&types={}&key={}"
+NEARBY_URL = BASE_URL + ":searchnearby"
+DETAIL_URL = BASE_URL + "/json?placeid={}"
 
 # user agent for populartimes request
 USER_AGENT = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_1) "
                             "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/54.0.2840.98 Safari/537.36"}
 
+                            "Chrome/54.0.2840.98 Safari/537.36"}
 
 class PopulartimesException(Exception):
     """Exception raised for errors in the input.
@@ -144,6 +144,38 @@ def get_circle_centers(b1, b2, radius):
     return cords
 
 
+def get_nearby_search(item):
+    _lat, _lng = item["pos"]
+    nearby_search_url = NEARBY_URL.format(_lat, _lng, params["radius"], "|".join(params["type"]), params["API_key"])
+
+    # Handle next page token if applicable
+    if "next_page_token" in item:
+        sleep(2)  # Ensure enough time has passed before the next page token becomes valid
+        nearby_search_url += "&pagetoken=" + item["next_page_token"]
+
+    response = requests.get(nearby_search_url)
+    resp = response.json()
+    check_response_code(resp)
+
+    places = resp.get("results", [])
+
+    item["res"] += len(places)
+    if item["res"] >= 60:
+        logging.warning("Result limit in search radius reached, some data may get lost")
+
+    # Process the places
+    for place in places:
+        geo = place["geometry"]["location"]
+        if bounds_within(geo, params["bounds"]):
+            g_places[place["place_id"]] = place
+
+    # Schedule next page requests if applicable
+    if "next_page_token" in resp:
+        item["next_page_token"] = resp["next_page_token"]
+        q_nearby.put(item)
+
+
+
 def worker_radar():
     """
       worker that gets coordinates of queue and starts radar search
@@ -157,7 +189,8 @@ def worker_radar():
 
 def get_radar(item):
     _lat, _lng = item["pos"]
-
+    radar_str = NEARBY_URL.format(_lat, _lng, params["radius"], "|".join(params["type"]), params["API_key"])
+  
     # places - nearby search
     # https://developers.google.com/places/web-service/search?hl=en#PlaceSearchRequests
     radar_str = NEARBY_URL.format(
@@ -172,7 +205,8 @@ def get_radar(item):
         if sec_passed < min_wait:
             sleep(min_wait - sec_passed)
         radar_str += "&pagetoken=" + item["next_page_token"]
-
+        pass
+      
     resp = json.loads(requests.get(radar_str, auth=('user', 'pass')).text)
     check_response_code(resp)
 
@@ -410,16 +444,21 @@ def get_populartimes_from_search(name, address):
 
 
 def get_detail(place_id):
-    """
-    loads data for a given area
-    :return:
-    """
-    global results
+    # Adjusted to use updated DETAIL_URL and handle new response format
+    detail_str = DETAIL_URL.format(place_id, params["API_key"])
+    resp = requests.get(detail_str).json()
+    check_response_code(resp)
+    detail = resp["result"]
 
-    # detail_json = get_populartimes(params["API_key"], place_id)
-    detail_json = get_populartimes_by_detail(params["API_key"], g_places[place_id])
+def get_detail(place_id):
+    detail_url = DETAIL_URL.format(place_id, params["API_key"])
+    response = requests.get(detail_url)
+    resp = response.json()
+    check_response_code(resp)
 
-    if params["all_places"] or "populartimes" in detail_json:
+    detail = resp.get("result", {})
+    if params["all_places"] or "populartimes" in detail:
+        detail_json = process_place_details(detail)
         results.append(detail_json)
 
 
@@ -433,6 +472,10 @@ def get_populartimes(api_key, place_id):
 
     # places api - detail search
     # https://developers.google.com/places/web-service/details?hl=de
+    detail_json = get_populartimes_by_detail(api_key, g_places[place_id])
+    if params["all_places"] or "populartimes" in detail_json:
+        results.append(detail_json)
+    
     detail_str = DETAIL_URL.format(place_id, api_key)
     resp = json.loads(requests.get(detail_str, auth=('user', 'pass')).text)
     check_response_code(resp)
@@ -466,7 +509,8 @@ def check_response_code(resp):
     :return:
     """
     if resp["status"] == "OK" or resp["status"] == "ZERO_RESULTS":
-        return
+        raise PopulartimesException("Google Places API Error", resp.get("error_message", "Unknown error"))
+        # return
 
     if resp["status"] == "REQUEST_DENIED":
         raise PopulartimesException("Google Places " + resp["status"],
@@ -498,39 +542,39 @@ def check_response_code(resp):
 
 def run(_params):
     """
-    wrap execution logic in method, for later external call
-    :return:
+    Wrap execution logic in method, for later external call.
+    Now using Nearby Search instead of Radar Search.
     """
-    global params, g_places, q_radar, q_detail, results
+    global params, g_places, q_nearby, q_detail, results
 
     start = datetime.datetime.now()
 
-    # shared variables
+    # Shared variables
     params = _params
-    q_radar, q_detail = Queue(), Queue()
+    q_nearby, q_detail = Queue(), Queue()  # Updated to use q_nearby
     g_places, results = dict(), list()
 
     logging.info("Adding places to queue...")
 
-    # threading for radar search
+    # Threading for nearby search
     for i in range(params["n_threads"]):
-        t = threading.Thread(target=worker_radar)
+        t = threading.Thread(target=get_nearby_search)  # Updated to use get_nearby_search
         t.daemon = True
         t.start()
 
-    # cover search area with circles
+    # Cover search area with circles
     bounds = params["bounds"]
-    for lat, lng in get_circle_centers([bounds["lower"]["lat"], bounds["lower"]["lng"]],  # southwest
-                                       [bounds["upper"]["lat"], bounds["upper"]["lng"]],  # northeast
+    for lat, lng in get_circle_centers([bounds["lower"]["lat"], bounds["lower"]["lng"]],
+                                       [bounds["upper"]["lat"], bounds["upper"]["lng"]],
                                        params["radius"]):
-        q_radar.put(dict(pos=(lat, lng), res=0))
+        q_nearby.put(dict(pos=(lat, lng), res=0))  # Updated to use q_nearby
 
-    q_radar.join()
+    q_nearby.join()  # Updated to use q_nearby
     logging.info("Finished in: {}".format(str(datetime.datetime.now() - start)))
 
     logging.info("{} places to process...".format(len(g_places)))
 
-    # threading for detail search and popular times
+    # Threading for detail search and popular times
     for i in range(params["n_threads"]):
         t = threading.Thread(target=worker_detail)
         t.daemon = True
